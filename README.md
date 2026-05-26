@@ -7,18 +7,19 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 ---
 
 ## Status
-
 | Phase | Description | Status |
 |------|------------|--------|
 | 1 | Setup, ingest, repo | ✅ Done |
 | 2 | Target definition, quality scan, vintage analysis | ✅ Done |
 | 3 | ETL & analytical table | ✅ Done |
 | 4 | Feature engineering (binning, encoding, date features) | ✅ Done |
-| 5 | Snowflake load + SQL views | ⏳ Next |
-| 6 | Scorecard (SAS) + PD/LGD/EAD | ⏳ |
-| 7 | Approval strategy & cutoff analysis | ⏳ |
-| 8 | Tableau dashboard | ⏳ |
-| 9 | Write-up & model governance note | ⏳ |
+| 5 | WoE transformation, IV feature selection, time-based train/test split | ✅ Done |
+| 6 | Logistic regression scorecard (train, validate, scale to points) | ⏳ Next |
+| 7 | PD / LGD / EAD and expected loss calculation | ⏳ |
+| 8 | Approval strategy & cutoff analysis | ⏳ |
+| 9 | Snowflake load + SQL reporting views | ⏳ |
+| 10 | Tableau dashboard | ⏳ |
+| 11 | Write-up, scorecard documentation, model governance note | ⏳ |
 
 ---
 
@@ -137,6 +138,40 @@ credit-portfolio-risk/
 
 ---
 
-## Next up — Day 5
+## Day 5 — WoE transformation and IV-based feature selection
 
-WoE (Weight of Evidence) transformation and Information Value calculation on all binned features. Standard credit-scorecard preparation step before logistic regression.
+**Goal:** transform features into Weight of Evidence space and select by Information Value, with proper out-of-time validation setup.
+
+**Actions**
+- Time-based train/test split on `issue_year`: train ≤ 2016 (1,119,710 rows / 83%), test ≥ 2017 (225,639 rows / 17%).
+- Implemented reusable WoE/IV function with Laplace smoothing (+0.5) to handle zero-count bins.
+- Computed IV for 13 candidate features on training data only — prevents test-set leakage into the WoE mapping.
+- Applied training-set WoE mapping to both train and test sets (fit on train, transform both).
+
+**IV ranking (training set)**
+| Feature | IV | Verdict |
+|---|---|---|
+| `grade_num` | 0.4677 | Strong — Lending Club's own risk grade |
+| `term_months` | 0.1972 | Medium |
+| `dti_bin` | 0.0727 | Weak-medium |
+| `verification_status_idx` | 0.0532 | Weak |
+| `issue_year` | 0.0307 | Weak (captures vintage/macro effects) |
+| `inc_bin` | 0.0288 | Weak |
+| `home_ownership_idx` | 0.0265 | Weak |
+| `purpose_idx` | 0.0201 | Borderline, kept |
+| `util_bin` | 0.0186 | **Dropped** (below 0.02 threshold) |
+| `credit_history_months` | 0.0152 | **Dropped** (raw continuous, requires binning) |
+| `has_public_record` | 0.0069 | **Dropped** |
+| `has_prior_delinq` | 0.0020 | **Dropped** |
+| `emp_length_years` | — | Not present in feature table — gap noted for Day 6 |
+
+**Modelling decision flagged for Day 6**
+- `grade_num` IV is ~2.4× the next strongest feature. Logistic regression will lean heavily on it, since `grade` is itself a model output from Lending Club's underwriting. Day 6 will train two models — with and without `grade_num` — to measure incremental signal from the remaining features. The "without grade" model is the more interesting CV artefact: it demonstrates the scorecard adds independent risk signal beyond LC's own grade.
+
+**Output:** `workspace.default.lc_train_woe` (1,119,710 rows × 10 cols), `workspace.default.lc_test_woe` (225,639 rows × 10 cols).
+
+---
+
+## Next up — Day 6
+
+Logistic regression scorecard on `lc_train_woe`. Evaluate on `lc_test_woe` using AUC, KS statistic, and Gini coefficient. Scale coefficients to standard scorecard points (e.g. 600 base, 20 PDO). Compare grade-inclusive vs grade-excluded models.
