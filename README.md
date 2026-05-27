@@ -14,8 +14,8 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 3 | ETL & analytical table | ✅ Done |
 | 4 | Feature engineering (binning, encoding, date features) | ✅ Done |
 | 5 | WoE transformation, IV feature selection, time-based train/test split | ✅ Done |
-| 6 | Logistic regression scorecard (train, validate, scale to points) | ⏳ Next |
-| 7 | PD / LGD / EAD and expected loss calculation | ⏳ |
+| 6 | Logistic regression scorecard (train, validate, scale to points) | ✅ Done |
+| 7 | PD / LGD / EAD and expected loss calculation | ⏳ Next |
 | 8 | Approval strategy & cutoff analysis | ⏳ |
 | 9 | Snowflake load + SQL reporting views | ⏳ |
 | 10 | Tableau dashboard | ⏳ |
@@ -172,6 +172,65 @@ credit-portfolio-risk/
 
 ---
 
-## Next up — Day 6
+## Day 6 — Logistic regression scorecard
 
-Logistic regression scorecard on `lc_train_woe`. Evaluate on `lc_test_woe` using AUC, KS statistic, and Gini coefficient. Scale coefficients to standard scorecard points (e.g. 600 base, 20 PDO). Compare grade-inclusive vs grade-excluded models.
+**Goal:** train a logistic regression PD model on the WoE-transformed training set, evaluate on the out-of-time test set, and scale coefficients into standard scorecard points.
+
+**Feature decision pre-fit**
+- Dropped `issue_year_woe` from the candidate feature list. Under a time-based split (train ≤ 2016, test ≥ 2017), 100% of test-set `issue_year` values are unseen in training, producing null WoE mappings. Vintage and macroeconomic effects belong in the PD calibration / stress overlay (Day 7), not the borrower-level scorecard.
+- Filled a small residual null pocket in `dti_bin_woe` (266 train / 334 test rows, ~0.02–0.15%) with neutral WoE = 0.
+
+**Final feature set (7 features)**
+`inc_bin_woe`, `dti_bin_woe`, `grade_num_woe`, `home_ownership_idx_woe`, `purpose_idx_woe`, `verification_status_idx_woe`, `term_months_woe`.
+
+**Models trained**
+1. **Full model** — all 7 features including `grade_num_woe`
+2. **No-grade model** — 6 features excluding `grade_num_woe`, to measure independent signal beyond Lending Club's own underwriting grade
+
+**Coefficients (full model)**
+All 7 coefficients are negative, consistent with the WoE convention (higher WoE = safer borrower → lower default probability). No sign inversions, no broken monotonicity. Intercept: -1.4054.
+
+| Feature | Coefficient | Points per WoE unit |
+|---|---|---|
+| `home_ownership_idx_woe` | -0.8901 | 25.68 |
+| `grade_num_woe` | -0.7588 | 21.89 |
+| `dti_bin_woe` | -0.5642 | 16.28 |
+| `inc_bin_woe` | -0.5607 | 16.18 |
+| `term_months_woe` | -0.5515 | 15.91 |
+| `verification_status_idx_woe` | -0.3000 | 8.66 |
+| `purpose_idx_woe` | -0.1925 | 5.56 |
+
+Note: `home_ownership` carries more weight than `grade` in the fitted model despite having lower univariate IV. This reflects redundancy between `grade` and the other features in the model (verification, term, DTI all correlate with grade) — the LR fit redistributes credit accordingly. To be revisited in Day 7 with VIF / correlation diagnostics.
+
+**Out-of-time test results (test set: 225,639 loans issued 2017+)**
+
+| Model | AUC | KS | Gini |
+|---|---|---|---|
+| Full (with grade) | 0.6923 | 0.2804 | 0.3847 |
+| No-grade | 0.6453 | 0.2113 | 0.2906 |
+| Δ (grade contribution) | +0.0470 | +0.0691 | +0.0941 |
+
+**Honest interpretation**
+- Full model performance is in the normal industry range for Lending Club PD scorecards (AUC 0.68–0.72). No leakage indicators.
+- Grade carries roughly 60% of the discriminatory power; the remaining 6 borrower-level features carry ~40%. The no-grade model at AUC 0.6453 demonstrates the scorecard adds independent risk signal beyond LC's own grade, but is not strong enough to stand alone.
+- KS of 0.28 on the full model is consistent with the AUC and acceptable for a behavioural scorecard; production scorecards typically target KS > 0.30, so this is borderline.
+
+**Scorecard scaling**
+Standard banking parameters: Base = 600, PDO = 20, target odds = 50:1 at base.
+- factor = 28.85, offset = 487.12
+- Score = 487.12 + 28.85 × (-logit(PD)), bounded in practice to roughly 350–850.
+
+**Outputs**
+- `workspace.default.lc_test_scored` — 225,639 scored test rows with predicted PD
+- `workspace.default.lc_scorecard_points` — 7-row points table for documentation
+
+**Open items flagged for later phases**
+- Run multicollinearity diagnostics (VIF, correlation matrix) on the WoE feature set — `home_ownership` outranking `grade` in the LR fit suggests redundancy worth quantifying.
+- Calibrate the model's raw PD output to observed default rates per score band on the test set (Day 7).
+- Consider whether `emp_length` and `cr_hist_bin`, both lost upstream, should be reintroduced to push KS over 0.30.
+
+---
+
+## Next up — Day 7
+
+PD calibration to actual default rates, LGD/EAD assumptions for Lending Club (LGD typically modelled at 65–75% for unsecured personal loans, EAD = outstanding principal at default), and expected loss = PD × LGD × EAD per loan. This is where the project pivots from "classifier" to "credit risk model."
