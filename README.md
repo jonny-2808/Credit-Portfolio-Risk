@@ -15,8 +15,8 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 4 | Feature engineering (binning, encoding, date features) | ✅ Done |
 | 5 | WoE transformation, IV feature selection, time-based train/test split | ✅ Done |
 | 6 | Logistic regression scorecard (train, validate, scale to points) | ✅ Done |
-| 7 | PD / LGD / EAD and expected loss calculation | ⏳ Next |
-| 8 | Approval strategy & cutoff analysis | ⏳ |
+| 7 | PD / LGD / EAD and expected loss calculation | ✅ Done  |
+| 8 | Approval strategy & cutoff analysis | ⏳ Next |
 | 9 | Snowflake load + SQL reporting views | ⏳ |
 | 10 | Tableau dashboard | ⏳ |
 | 11 | Write-up, scorecard documentation, model governance note | ⏳ |
@@ -231,6 +231,20 @@ Standard banking parameters: Base = 600, PDO = 20, target odds = 50:1 at base.
 
 ---
 
-## Next up — Day 7
+## Day 7 — Expected Loss (EL = PD × LGD × EAD)
 
-PD calibration to actual default rates, LGD/EAD assumptions for Lending Club (LGD typically modelled at 65–75% for unsecured personal loans, EAD = outstanding principal at default), and expected loss = PD × LGD × EAD per loan. This is where the project pivots from "classifier" to "credit risk model."
+- Realised LGD = 0.8903, measured on charged-off loans (loss / exposure-at-default).
+  Legitimate use of post-outcome columns: LGD is conditional on observed default.
+- EAD proxied by funded_amnt (fixed-term loans; no CCF — that's for revolving credit).
+- EL = PD × 0.8903 × funded_amnt across 225,639 out-of-time test loans.
+- Total expected loss $598.1M | EL rate 18.35%.
+- Out-of-time calibration: predicted EL $598.1M vs realised loss $608.1M → Pred/Actual 0.98.
+- PD ranks monotonically by grade (A 6.1% → G 49.9%), confirming scorecard discrimination.
+
+**Limitations:** 2017+ vintages partly right-censored (understates realised loss);
+LGD is a realised assumption, not a fitted model. id was lost in the Day 4 feature
+step and rebuilt from raw — passthrough keys should be preserved through all pipeline stages.
+
+---
+
+## Next up Day 8 - Approval Strategy & Cut-off Analysis
