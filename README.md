@@ -16,8 +16,8 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 5 | WoE transformation, IV feature selection, time-based train/test split | ✅ Done |
 | 6 | Logistic regression scorecard (train, validate, scale to points) | ✅ Done |
 | 7 | PD / LGD / EAD and expected loss calculation | ✅ Done  |
-| 8 | Approval strategy & cutoff analysis | ⏳ Next |
-| 9 | Snowflake load + SQL reporting views | ⏳ |
+| 8 | Approval strategy & cutoff analysis | ✅ Done |
+| 9 | Snowflake load + SQL reporting views | ⏳ Next |
 | 10 | Tableau dashboard | ⏳ |
 | 11 | Write-up, scorecard documentation, model governance note | ⏳ |
 
@@ -247,4 +247,25 @@ step and rebuilt from raw — passthrough keys should be preserved through all p
 
 ---
 
-## Next up Day 8 - Approval Strategy & Cut-off Analysis
+## Day 8 — Approval Strategy & Cutoff Analysis
+
+**Goal:** turn per-loan PD/EL into a lending policy — where to set the approval cutoff, and prove the scorecard beats a naive grade rule.
+
+**Actions**
+- VIF (multicollinearity) check on the 7 WoE scorecard features via inverse-correlation-matrix method (statsmodels unavailable on Databricks Free Edition). Max VIF [x.x] ([feature]) — [below 5, no action needed].
+- Rebuilt `lc_test_el`: the Day 7 saveAsTable silently never ran, so the expected-loss table was missing. Reconstructed directly off `lc_test_scored_final` (already carried id, pd_prediction, funded_amnt, int_rate, grade — no join required). Validated against Day 7 totals: EL $598.1M, EL rate 18.35% — faithful match.
+- Approval cutoff swept 10%→100% on PD (monotonic with scorecard points, so equivalent to a score cutoff). Income vs expected loss tallied at each step.
+- Net contribution (income − EL) is concave in approval rate — peaks at ~30% approval, PD cutoff ≈ 0.12, then declines as marginal loans destroy value.
+- Swap-set vs naive grade cutoff (A–D approve): scorecard swaps in [n] loans the grade rule would decline — the incrementality case for a custom scorecard.
+
+**Honest limitations**
+- The optimal cutoff is biased too tight: interest income is one year (funded_amnt × int_rate) while EL is lifetime, an apples-to-oranges horizon. Directional trade-off is robust; the exact "30%" is NOT a real policy number.
+- Income is a crude proxy — no funding cost, opex, prepayment, or time value. Relative cutoff ranking, not a P&L.
+- LGD reused as Day 7 realised constant (0.8903), not a fitted model.
+- 2017+ test vintages partly right-censored → realised loss understated.
+
+**Pipeline lesson:** a `saveAsTable` that doesn't run leaves no error but loses the table. Verify outputs persisted (`SHOW TABLES`) at the end of each session.
+
+**Outputs:** workspace.default.lc_test_el (rebuilt), workspace.default.lc_approval_sweep
+
+
