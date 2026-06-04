@@ -34,17 +34,19 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 ---
 
 ## Repo layout
-
 ```
 credit-portfolio-risk/
 ├── README.md
 ├── notebooks/
-│   ├── 01_data_overview.ipynb         # Days 1–3: ingest, target, ETL, analytical table
-│   └── 04_feature_engineering.ipynb   # Day 4: binning, encoding, date features
-├── docs/                               # write-up, governance note, dashboard exports (coming)
-└── sql/                                # Snowflake DDL & views (coming)
+│   ├── 01_data_overview.ipynb        # Days 1–3: ingest, target, ETL, analytical table
+│   ├── 04_feature_engineering.ipynb  # Day 4: binning, encoding, date features
+│   ├── 05_woe_iv.ipynb               # Day 5: WoE transform, IV selection, time-based split
+│   ├── 06_logistic_scorecard.ipynb   # Day 6: logistic regression PD model, scaled to points
+│   ├── 07_expected_loss.ipynb        # Day 7: PD/LGD/EAD, expected loss, OOT calibration
+│   └── 08_approval_strategy.ipynb    # Day 8: VIF check, approval cutoff sweep, swap-set
+├── docs/                             # write-up, governance note, dashboard exports (coming)
+└── sql/                              # Snowflake DDL & views (coming)
 ```
-
 ---
 
 ## Data
