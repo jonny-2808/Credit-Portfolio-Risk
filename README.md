@@ -17,8 +17,8 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 6 | Logistic regression scorecard (train, validate, scale to points) | ✅ Done |
 | 7 | PD / LGD / EAD and expected loss calculation | ✅ Done  |
 | 8 | Approval strategy & cutoff analysis | ✅ Done |
-| 9 | Snowflake load + SQL reporting views | ⏳ Next |
-| 10 | Tableau dashboard | ⏳ |
+| 9 | Snowflake load + SQL reporting views | ✅ Done |
+| 10 | Tableau dashboard | ⏳ Next |
 | 11 | Write-up, scorecard documentation, model governance note | ⏳ |
 
 ---
@@ -45,7 +45,8 @@ credit-portfolio-risk/
 │   ├── 07_expected_loss.ipynb        # Day 7: PD/LGD/EAD, expected loss, OOT calibration
 │   └── 08_approval_strategy.ipynb    # Day 8: VIF check, approval cutoff sweep, swap-set
 ├── docs/                             # write-up, governance note, dashboard exports (coming)
-└── sql/                              # Snowflake DDL & views (coming)
+└── └── sql/
+    └── 09_snowflake_reporting_views.sql  # Day 9: warehouse/db/schema, file format, stage, COPY INTO, four reporting views
 ```
 ---
 
@@ -270,4 +271,37 @@ step and rebuilt from raw — passthrough keys should be preserved through all p
 
 **Outputs:** workspace.default.lc_test_el (rebuilt), workspace.default.lc_approval_sweep
 
+---
+
+## Day 9 — Snowflake reporting layer
+
+**Goal:** stand up an analytical warehouse, load the scored portfolio, and build the SQL views that downstream MI and Tableau will consume.
+
+**Actions**
+- Created Snowflake trial account; provisioned warehouse `LC_WH` (XSMALL, AUTO_SUSPEND=60), database `LC_DB`, schema `RISK`.
+- Joined `lc_test_el` ⨝ `lc_test_scored_final` on `id` in Databricks to recover `is_bad` alongside the precomputed PD, EAD, EL, interest income, and grade. Exported a slimmed seven-column CSV (~15 MB) to a Unity Catalog volume, downloaded, uploaded to Snowflake internal stage `LC_STAGE`, loaded into table `LC_SCORED` via `COPY INTO`.
+- Built four reporting views on top of `LC_SCORED`:
+  - `V_PORTFOLIO_EL_SUMMARY` — headline portfolio MI (loans, EAD, EL, EL rate, interest income, net contribution, avg PD, observed bad rate).
+  - `V_GRADE_RISK_RETURN` — per-grade EL rate in bps and net contribution; rank-order check for the scorecard.
+  - `V_PD_BAND_CALIBRATION` — PD bands with predicted vs observed bad rate; calibration check.
+  - `V_APPROVAL_DECISION` — book splits at the Day-8 PD cutoff of 0.12, with EAD, EL, EL rate, and net contribution on each side.
+
+**Why file-based load, not the live connector**
+Databricks Free Edition restricts outbound network egress to a trusted-domains list, which blocks the Spark–Snowflake connector at the network layer. Data movement was therefore: Delta → CSV in volume → manual download → Snowsight stage upload → `COPY INTO`. In a production deployment this would be replaced by the Spark connector writing directly to Snowflake, or by Snowpipe consuming files from an external (S3/ADLS/GCS) stage.
+
+**Day 9 findings**
+- **Reconciliation passed to the dollar.** Total EL in Snowflake = **$598,114,432.77**, EL rate = **18.35%** — exact tie to Day 7. Load is lossless.
+- **Scorecard rank-orders cleanly by grade.** EL rate runs A=536 bps → B=1,177 → C=1,985 → D=2,628 → E=3,386 → F=4,118 → G=4,428. Observed bad rate runs 6.3% → 50.1%. Monotonic on both.
+- **PD calibration is tight at the tails, slightly under-predicts in the middle.** <5% band: predicted 4.44% / observed 4.00%. 40%+ band: predicted 47.12% / observed 46.79%. Bands 3–5 (10–25%, 25–40%) under-predict observed bad rate by 2–3pp — disclosed as a known weakness; affects ~164k of 225k loans.
+- **Approval cutoff converts a loss-making book to a profitable sub-book.** At PD ≤ 0.12: 29.9% of the book is approved, carrying $887M EAD, $60M EL (6.81% EL rate), **+$14.8M net contribution**. The 70.1% declined sub-book would carry $2.37bn EAD, $538M EL (22.67% EL rate), **−$146M net contribution**. This is the model's headline business value.
+
+**Caveats and governance notes**
+- LGD = **0.8903** is hardcoded in the precomputed `EL` column from Day 7 (realised loss-given-default from the historical portfolio). In production this would be a parameter or scored column, not a literal.
+- `net_contribution = interest_income − EL` is a **gross margin proxy**, not net profit — funding cost, opex, and capital charge are out of scope.
+- The Day-8 horizon caveat carries forward: confirm whether `interest_income` is realised lifetime interest or annualised before quoting the portfolio-level `net_contribution = −$131M` figure externally. The relative cutoff conclusion (approve sub-book positive, decline sub-book negative) is robust either way.
+
+**Lessons learned (Snowflake gotchas worth knowing)**
+- `CREATE OR REPLACE TABLE` is destructive: re-running a "setup" script wipes already-loaded data with no warning. Reproducible SQL must separate one-time DDL (`CREATE … IF NOT EXISTS`) from re-runnable logic (views, queries).
+- `COPY INTO` tracks load history per table and **silently skips already-loaded files** — returns "0 files processed" with no error. `FORCE=TRUE` overrides this in development; in production you'd rely on the history or use Snowpipe for incremental loads.
+- Same family as the Day-4 passthrough-column drop: in both cases the operation appeared to succeed and produced silently wrong downstream numbers. Verify state explicitly (`LIST @stage`, `SELECT COUNT(*)`, reconciliation against an upstream figure) — don't trust "successful execution" as proof of correctness.
 
