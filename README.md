@@ -18,7 +18,7 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 7 | PD / LGD / EAD and expected loss calculation | ✅ Done  |
 | 8 | Approval strategy & cutoff analysis | ✅ Done |
 | 9 | Snowflake load + SQL reporting views | ✅ Done |
-| 10 | Tableau dashboard | ⏳ Next |
+| 10 | Tableau dashboard | 🚧 In progress |
 | 11 | Write-up, scorecard documentation, model governance note | ⏳ |
 
 ---
@@ -43,10 +43,13 @@ credit-portfolio-risk/
 │   ├── 05_woe_iv.ipynb               # Day 5: WoE transform, IV selection, time-based split
 │   ├── 06_logistic_scorecard.ipynb   # Day 6: logistic regression PD model, scaled to points
 │   ├── 07_expected_loss.ipynb        # Day 7: PD/LGD/EAD, expected loss, OOT calibration
-│   └── 08_approval_strategy.ipynb    # Day 8: VIF check, approval cutoff sweep, swap-set
-├── docs/                             # write-up, governance note, dashboard exports (coming)
-└── └── sql/
-    └── 09_snowflake_reporting_views.sql  # Day 9: warehouse/db/schema, file format, stage, COPY INTO, four reporting views
+│   ├── 08_approval_strategy.ipynb    # Day 8: VIF check, approval cutoff sweep, swap-set
+│   └── 10_tableau_export.ipynb       # Day 10: re-ran reporting-view logic in Databricks, exported aggregated CSVs for Tableau
+├── sql/
+│   └── 09_snowflake_reporting_views.sql  # Day 9: warehouse/db/schema, file format, stage, COPY INTO, four reporting views
+├── tableau/
+│   └── data/                         # four aggregated CSVs feeding the dashboard (portfolio_kpi, grade_el_summary, pd_calibration, approval_decision)
+└── docs/                             # write-up, governance note, dashboard exports (coming)
 ```
 ---
 
@@ -304,4 +307,26 @@ Databricks Free Edition restricts outbound network egress to a trusted-domains l
 - `CREATE OR REPLACE TABLE` is destructive: re-running a "setup" script wipes already-loaded data with no warning. Reproducible SQL must separate one-time DDL (`CREATE … IF NOT EXISTS`) from re-runnable logic (views, queries).
 - `COPY INTO` tracks load history per table and **silently skips already-loaded files** — returns "0 files processed" with no error. `FORCE=TRUE` overrides this in development; in production you'd rely on the history or use Snowpipe for incremental loads.
 - Same family as the Day-4 passthrough-column drop: in both cases the operation appeared to succeed and produced silently wrong downstream numbers. Verify state explicitly (`LIST @stage`, `SELECT COUNT(*)`, reconciliation against an upstream figure) — don't trust "successful execution" as proof of correctness.
+
+## Day 10 — Tableau MI dashboard (in progress)
+
+**Goal:** turn the Snowflake reporting layer into a stakeholder-facing dashboard — the one artefact a non-technical reader can grasp in 30 seconds.
+
+**Actions**
+- Hit a free-tier wall: Tableau Public has no live database connector (no Snowflake, no warehouse of any kind) — it ingests flat files only. Same class of constraint as the Day-9 Databricks egress block.
+- Worked around it by re-running the four reporting-view queries in Databricks against `lc_scored.csv` (the same seven-column file loaded into Snowflake on Day 9), exporting four small aggregated CSVs for Tableau: `portfolio_kpi`, `grade_el_summary`, `pd_calibration`, `approval_decision`. Notebook `10_tableau_export.ipynb`.
+- **Reconciliation gate passed before building anything:** total EL = **$598.11M**, EL rate = **18.35%** — exact tie to Day 7 and Day 9. Confirms the Databricks → Snowflake → CSV → re-read chain is lossless and the dashboard ties to documented figures.
+- Built first worksheet — **EL rate by grade**: monotonic 536 → 4,428 bps, percentage axis, single-hue gradient that darkens with risk so colour reinforces the rank-order rather than decorating it.
+- Built **Total Expected Loss** KPI tile ($598.11M). Assembled both onto a dashboard canvas with title.
+
+**Why re-run in Databricks instead of exporting from Snowflake**
+Snowsight (the Snowflake web console) was inaccessible this session, and Tableau Public can't read Snowflake live regardless. Re-running the portable view logic against the same source file in Databricks produces identical numbers (proven by the reconciliation gate) and is the easiest path to a CSV. Snowflake remains the documented warehouse layer; Tableau is simply sourced from the file copy.
+
+**Remaining (Day 11)**
+- PD calibration dual-line (predicted vs observed by band — the mid-band under-prediction).
+- Approval-decision net-contribution bars at the 0.12 cutoff, with the horizon-mismatch caveat on-canvas.
+- Remaining KPI tiles (18.35% EL rate, 225,639 loans), governance text box, layout polish.
+- Publish to Tableau Public; add live URL and STAR CV bullet here.
+
+**Lesson:** every free-tier tool in this stack forced a CSV hop — Databricks egress (Day 9), Tableau Public connectors (Day 10). On any free-tier pipeline, assume the integration points won't connect live and plan the file bridge from the start rather than discovering it mid-build.
 
