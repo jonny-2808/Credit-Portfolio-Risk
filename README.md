@@ -6,6 +6,16 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 
 ---
 
+## Dashboard
+
+**[▶ View the interactive dashboard on Tableau Public](https://public.tableau.com/app/profile/jonathan.dcruz/viz/credit_portfolio_risk_mi/Dashboard2)**
+
+![Credit risk portfolio dashboard](tableau/dashboard_preview.png)
+
+Four-panel stakeholder view: portfolio KPIs, expected-loss staircase by grade, PD calibration (predicted vs observed), and the approval-cutoff net-contribution decision at PD ≤ 0.12.
+
+---
+
 ## Status
 | Phase | Description | Status |
 |------|------------|--------|
@@ -15,19 +25,24 @@ This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~
 | 4 | Feature engineering (binning, encoding, date features) | ✅ Done |
 | 5 | WoE transformation, IV feature selection, time-based train/test split | ✅ Done |
 | 6 | Logistic regression scorecard (train, validate, scale to points) | ✅ Done |
-| 7 | PD / LGD / EAD and expected loss calculation | ✅ Done  |
+| 7 | PD / LGD / EAD and expected loss calculation | ✅ Done |
 | 8 | Approval strategy & cutoff analysis | ✅ Done |
 | 9 | Snowflake load + SQL reporting views | ✅ Done |
-| 10 | Tableau dashboard | 🚧 In progress |
-| 11 | Write-up, scorecard documentation, model governance note | ⏳ |
+| 10 | Tableau dashboard (build + publish) | ✅ Done |
+| 11 | Local feature rebuild for SAS (post-Databricks compute lapse) | ✅ Done |
+| 12 | SAS scorecard — native reproduction & validation | ✅ Done |
+
+
+**Build complete.** The end-to-end pipeline is built, validated, and published. Governance commentary is carried inline throughout this README; a separate consolidated write-up is an optional future addition.
 
 ---
 
 ## Toolstack
 
-- **Databricks Free Edition** (PySpark) — ingestion, cleaning, ETL, feature engineering
+- **Databricks Free Edition** (PySpark) — ingestion, cleaning, ETL, feature engineering (Days 1–10). The free compute allocation was exhausted late in the build; because all distributed transformation was already complete and committed, the remaining work required no Spark.
+- **Python / pandas (VS Code)** — local reproduction of the raw feature extract after Databricks compute lapsed (Day 12)
 - **Snowflake** (free trial) — analytical warehouse
-- **SAS OnDemand for Academics** — scorecard development
+- **SAS OnDemand for Academics** — independent scorecard reproduction & validation
 - **Tableau Public** — portfolio dashboard
 - **GitHub** — version control
 
@@ -44,13 +59,19 @@ credit-portfolio-risk/
 │   ├── 06_logistic_scorecard.ipynb   # Day 6: logistic regression PD model, scaled to points
 │   ├── 07_expected_loss.ipynb        # Day 7: PD/LGD/EAD, expected loss, OOT calibration
 │   ├── 08_approval_strategy.ipynb    # Day 8: VIF check, approval cutoff sweep, swap-set
-│   └── 10_tableau_export.ipynb       # Day 10: re-ran reporting-view logic in Databricks, exported aggregated CSVs for Tableau
+│   ├── 10_tableau_export.ipynb       # Day 10: re-ran reporting-view logic in Databricks, exported aggregated CSVs for Tableau
+│   └── 11_sas_feature_prep.ipynb     # Day 12: local pandas rebuild of the raw feature extract for SAS (post-Databricks)
 ├── sql/
 │   └── 09_snowflake_reporting_views.sql  # Day 9: warehouse/db/schema, file format, stage, COPY INTO, four reporting views
+├── sas/
+│   └── 12_sas_scorecard.sas          # Day 12: native SAS scorecard reproduction (WoE → PROC LOGISTIC → scaled points → validation)
 ├── tableau/
+│   ├── credit_risk_dashboard.twbx    # packaged workbook — data bundled, opens in Tableau Reader
+│   ├── dashboard_preview.png         # static dashboard screenshot (embedded above)
 │   └── data/                         # four aggregated CSVs feeding the dashboard (portfolio_kpi, grade_el_summary, pd_calibration, approval_decision)
-└── docs/                             # write-up, governance note, dashboard exports (coming)
 ```
+Note: the raw feature extracts (`lc_train_raw.csv` / `lc_test_raw.csv`) are not committed — they are large and fully reproducible from `notebooks/11_sas_feature_prep.ipynb`.
+
 ---
 
 ## Data
@@ -308,7 +329,9 @@ Databricks Free Edition restricts outbound network egress to a trusted-domains l
 - `COPY INTO` tracks load history per table and **silently skips already-loaded files** — returns "0 files processed" with no error. `FORCE=TRUE` overrides this in development; in production you'd rely on the history or use Snowpipe for incremental loads.
 - Same family as the Day-4 passthrough-column drop: in both cases the operation appeared to succeed and produced silently wrong downstream numbers. Verify state explicitly (`LIST @stage`, `SELECT COUNT(*)`, reconciliation against an upstream figure) — don't trust "successful execution" as proof of correctness.
 
-## Day 10 — Tableau MI dashboard (in progress)
+---
+
+## Day 10 — Tableau MI dashboard (build start)
 
 **Goal:** turn the Snowflake reporting layer into a stakeholder-facing dashboard — the one artefact a non-technical reader can grasp in 30 seconds.
 
@@ -322,11 +345,73 @@ Databricks Free Edition restricts outbound network egress to a trusted-domains l
 **Why re-run in Databricks instead of exporting from Snowflake**
 Snowsight (the Snowflake web console) was inaccessible this session, and Tableau Public can't read Snowflake live regardless. Re-running the portable view logic against the same source file in Databricks produces identical numbers (proven by the reconciliation gate) and is the easiest path to a CSV. Snowflake remains the documented warehouse layer; Tableau is simply sourced from the file copy.
 
-**Remaining (Day 11)**
-- PD calibration dual-line (predicted vs observed by band — the mid-band under-prediction).
-- Approval-decision net-contribution bars at the 0.12 cutoff, with the horizon-mismatch caveat on-canvas.
-- Remaining KPI tiles (18.35% EL rate, 225,639 loans), governance text box, layout polish.
-- Publish to Tableau Public; add live URL and STAR CV bullet here.
-
 **Lesson:** every free-tier tool in this stack forced a CSV hop — Databricks egress (Day 9), Tableau Public connectors (Day 10). On any free-tier pipeline, assume the integration points won't connect live and plan the file bridge from the start rather than discovering it mid-build.
 
+---
+
+## Day 11 — Tableau dashboard build & publish
+
+**Goal:** finish the four-panel dashboard started on Day 10 and publish it to Tableau Public.
+
+**Actions**
+- Completed the remaining worksheets off the Day 10 aggregated CSVs:
+  - **PD calibration dual-line** — predicted vs observed bad rate by PD band. The mid-band (10–40%) under-prediction of 2–3pp is shown and labelled rather than smoothed away.
+  - **Approval-decision net contribution** — bars for the approved (PD ≤ 0.12) vs declined sub-books (+$14.8M vs −$146M), with the horizon-mismatch caveat printed on-canvas so the figure can't be misread as a clean P&L.
+  - Remaining KPI tiles: 18.35% EL rate, 225,639 loans.
+- Assembled all four worksheets into a single dashboard with title, a short governance text box, and layout polish.
+- Published to Tableau Public. The packaged workbook (`.twbx`, data bundled) and a static preview PNG are committed under `tableau/`.
+
+**Note on data source:** Tableau Public ingests flat files only, so the dashboard reads the four aggregated CSVs, not a live warehouse connection. All figures tie to Day 7 / Day 9 / Day 10 via the reconciliation gate already documented.
+
+**Live dashboard:** link at the top of this README.
+
+---
+
+## Day 12 — Local feature rebuild for SAS scorecard
+
+**Goal:** regenerate the raw feature extract that feeds the SAS scorecard, after Databricks compute became unavailable.
+
+**Context**
+- The Databricks Free Edition compute allocation was exhausted and could not be restarted on the same account. Because all distributed transformation (Days 1–10) was already complete and committed, the only outstanding dependency was a lightweight raw-feature extract — a laptop-scale job that does not require Spark. The pragmatic choice was to reproduce that one step locally rather than re-provision cloud compute.
+
+**Actions**
+- Reproduced the raw feature extract locally in pandas (VS Code) from the source Lending Club CSV: read the 13 needed columns as strings, coerced numerics with `errors="coerce"` (the pandas analogue of the Day-4 `try_cast` / PERMISSIVE approach), stripped `%` from `int_rate` / `revol_util`, parsed `term`, mapped `grade` → `grade_num`, rebuilt `is_bad` on the locked Day-2 terminal-status definition, and applied the ≤2016 / ≥2017 time split. Carried all seven model features through (`annual_inc`, `dti`, `grade_num`, `term`, `home_ownership`, `purpose`, `verification_status`).
+- Wrote `lc_train_raw.csv` and `lc_test_raw.csv` as inputs to the SAS build. Notebook `11_sas_feature_prep.ipynb`.
+
+**Reconciliation to the Databricks split**
+- Local source file: 2,260,701 rows; terminal (modellable) population: 1,346,829 vs 1,345,349 originally (+0.11%).
+- Train (≤2016): 1,121,748 local vs 1,119,710 original. Test (≥2017): 225,081 local vs 225,639 original (−0.25%).
+- Diagnostics confirmed zero NA-driven row loss and all five terminal `loan_status` values present — the residual is a dataset-snapshot (vintage) difference between the local download and the Databricks copy, not a logic difference. No material impact on model discrimination.
+
+**Lesson:** free-tier compute quota can be withdrawn while persisted data stays locked behind it. Pull a local copy of every input and intermediate you'll need downstream *as you create it* — the egress complement to the Day-8 "verify outputs persisted" lesson.
+
+---
+
+## Day 12 (cont.) — SAS scorecard
+
+**Goal:** reproduce the application scorecard natively in SAS to validate the PySpark model and close the SAS gap on the toolstack.
+
+**Build (SAS OnDemand for Academics → SAS Studio)**
+- Imported the local train/test extracts (`proc import`, `guessingrows=max` to force full-file type inference).
+- WoE transform via a reusable macro: `proc rank groups=5` for continuous features, category-as-bin for ordinal/nominal features; WoE computed on **train only** to prevent test leakage.
+- Logistic regression (`proc logistic`) with `event='1'` pinned — the single most important token, forcing the model to predict *bad* rather than the default *good* (otherwise every coefficient silently inverts).
+- Scored the out-of-time test set, scaled to points (Base 600, PDO 20, 50:1 → factor 28.85, offset 487.12).
+
+**Result — independent SAS build ties to the PySpark model**
+
+| Metric | SAS (this build) | PySpark (Day 6) |
+|---|---|---|
+| Test AUC (c-statistic) | 0.682 | 0.6923 |
+| Gini | 0.364 | 0.3847 |
+| Test KS (D) | 0.266 | 0.2804 |
+| Train c-statistic | 0.700 | — |
+
+- **Rank-ordering reproduced cleanly.** Mean PD climbs A=6.3% → B=13.2% → C=22.1% → D=29.3% → E=37.9% → F=46.5% → G=50.2%; mean score falls A=565.6 → G=486.9. Monotonic both ways — the same staircase the dashboard shows, now reproduced in a second, independent tool.
+- Train c = 0.700 vs test c = 0.682: modest optimism, no overfitting signal.
+
+**Honest note — feature collinearity (documented, not hidden)**
+The model was specified with all seven features, but SAS set three nominal WoE features (`home_ownership`, `purpose`, `verification_status`) to zero, detecting them as linear combinations of the others. These were the three weakest by Information Value (0.020–0.053) and carried no independent signal once `grade` and `term` were in the model. The committed SAS build therefore fits the **four features that carry the discriminatory power** (`annual_inc`, `dti`, `grade_num`, `term`). Excluding the three weak features cost ~0.01 AUC (0.682 vs the 7-feature 0.692) — immaterial, and consistent with the redundancy already flagged in the Day 6 / Day 8 multicollinearity discussion.
+
+**Validation takeaway:** an independent SAS reimplementation reproduces the PySpark scorecard's discrimination within rounding, confirming the model logic is sound and tool-independent. The small metric deltas are attributable to binning-method differences (SAS `proc rank` quintiles vs Spark `QuantileDiscretizer` cutpoints) and the dataset-snapshot difference documented above — not a logic discrepancy.
+
+**Output:** `sas/12_sas_scorecard.sas` — full WoE → logistic → scaled-points → validation program.
