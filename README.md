@@ -2,7 +2,7 @@
 
 **Business question:** Which loan applications should we approve, and what loss should we expect from the loans we hold?
 
-This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~2.2M loans) and builds an end-to-end credit risk pipeline: data engineering in PySpark on Databricks, an analytical layer in Snowflake, a credit scorecard in SAS, and a portfolio dashboard in Tableau. The aim is to produce decisions in £, not just charts — what cutoff to approve at, and what expected loss the portfolio carries under different scenarios.
+This project takes a real consumer-lending dataset (Lending Club, 2007–2018, ~2.2M loans) and builds an end-to-end credit risk pipeline: data engineering in PySpark on Databricks, an analytical layer in Snowflake, a credit scorecard in SAS, and a portfolio dashboard in Tableau. The aim is to produce decisions in $, not just charts — what cutoff to approve at, and what expected loss the portfolio carries under different scenarios.
 
 ---
 
